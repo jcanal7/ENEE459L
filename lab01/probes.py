@@ -143,7 +143,18 @@ def probe_memory_total_kb(root: Path = Path("/")) -> dict[str, Any]:
     ever sees the pool. Students are expected to notice and to explain it in
     their report rather than round it up.
     """
-    
+    src = "/proc/meminfo"
+    raw = read_text(root,src)
+
+    # if unable to read, return an empty dictionary by calling unknown().
+    if not raw:
+        return unknown(src, "device tree model node absent — not a Jetson, or /proc not mounted")
+
+    m = re.search(r"^MemTotal:\s+(\d+)\s*kB", raw, re.MULTILINE) //
+
+    if not m:
+        return unknown(src, "MemTotal not found")
+
     return {"value": int(m.group(1)), "source": src, "status": "ok"}
 
 
@@ -159,7 +170,39 @@ def probe_root_source(root: Path = Path("/")) -> dict[str, Any]:
     /proc/mounts is preferred over `findmnt` because it needs no external
     binary and no elevation, and because it is what findmnt reads anyway.
     """
-    
+
+    src = "/proc/mounts"
+    raw = read_text(root,src)
+
+    # if unable to read, return an empty dictionary by calling unknown().
+    if not raw:
+        return unknown(src, "device tree model node absent — not a Jetson, or /proc not mounted")
+
+
+    for line in raw.splitlines():
+        parts = line.split()
+
+        if len(parts) <2:
+            continue
+
+        device = parts[0]
+        mount_point = parts[1]
+
+        if mount_point == "/":
+            if device.startswith("/dev/nvme"):
+                kind = "nvme"
+            elif device.startswith("/dev/mmcblk") or device.startswith("/dev/sd"):
+                kind = "ssd"
+            else:
+                kind = "other"
+
+            return {
+                "value": device,
+                "kind": kind,
+                "source": src,
+                "status": "ok",
+            }
+
     return unknown(src, "no root mount entry found in mount table")
 
 
@@ -171,11 +214,30 @@ def probe_nvme_present(root: Path = Path("/")) -> dict[str, Any]:
     is what lets the troubleshooting tree in the lab guide send a student to
     the right branch.
     """
-    
+
+    src = "/sys/block/nvme0n1"
+    path = Path(root) / "sys/block/nvme0n1"
+    present = path.exists()
+    if not present:
+        return {
+            "value": False ,
+            "model": None,
+            "source": src,
+            "status": "ok",
+        }
+
+    model_src = "/sys/block/nvme0n1/device/model"
+    raw_model = read_text(root,model_src)
+
+    if not raw_model:
+        return unknown(src, "NVMe exists but the model cannot be read")
+
+    model = re.sub(r"\s+", "", raw_model).strip()
+
     return {
-        "value": ,
-        "model": ,
-        "source": ,
+        "value": present,
+        "model": model,
+        "source": model_src,
         "status": "ok",
     }
 
@@ -191,6 +253,9 @@ def probe_pcie_link(root: Path = Path("/"), lspci_output: str | None = None) -> 
     `lspci_output` exists so the tests can drive this without root or hardware.
     In normal use it is None and the probe shells out.
     """
+
+    src = "lspci –vv"
+
         
     return {
         "value":,
