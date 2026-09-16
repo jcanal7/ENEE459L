@@ -93,8 +93,8 @@ def _parse_link_line(line: str) -> dict[str, Any]:
         "gen": _GEN_BY_GTS.get(gts) if gts is not None else None,
     }
 
-def generate_interpretation_string(neg_speed, cap_speed):
-    if cap_speed > neg_speed:
+def generate_interpretation_string(negotiated, capability):
+    if capability["gen"] > negotiated["gen"]:
         interpretation = (
             f"drive capable of Gen{capability['gen']}, link running at "
             f"Gen{negotiated['gen']} — expected on this carrier board, "
@@ -148,9 +148,9 @@ def probe_memory_total_kb(root: Path = Path("/")) -> dict[str, Any]:
 
     # if unable to read, return an empty dictionary by calling unknown().
     if not raw:
-        return unknown(src, "device tree model node absent — not a Jetson, or /proc not mounted")
+        return unknown(src, "could not read /proc/meminfo")
 
-    m = re.search(r"^MemTotal:\s+(\d+)\s*kB", raw, re.MULTILINE) //
+    m = re.search(r"^MemTotal:\s+(\d+)\s*kB", raw, re.MULTILINE)
 
     if not m:
         return unknown(src, "MemTotal not found")
@@ -176,7 +176,7 @@ def probe_root_source(root: Path = Path("/")) -> dict[str, Any]:
 
     # if unable to read, return an empty dictionary by calling unknown().
     if not raw:
-        return unknown(src, "device tree model node absent — not a Jetson, or /proc not mounted")
+        return unknown(src, "could not read /proc/mounts")
 
 
     for line in raw.splitlines():
@@ -203,7 +203,7 @@ def probe_root_source(root: Path = Path("/")) -> dict[str, Any]:
                 "status": "ok",
             }
 
-    return unknown(src, "no root mount entry found in mount table")
+    return unknown(src, "No root mount entry found in mount table")
 
 
 def probe_nvme_present(root: Path = Path("/")) -> dict[str, Any]:
@@ -237,7 +237,7 @@ def probe_nvme_present(root: Path = Path("/")) -> dict[str, Any]:
     return {
         "value": present,
         "model": model,
-        "source": model_src,
+        "source": src,
         "status": "ok",
     }
 
@@ -254,15 +254,47 @@ def probe_pcie_link(root: Path = Path("/"), lspci_output: str | None = None) -> 
     In normal use it is None and the probe shells out.
     """
 
-    src = "lspci –vv"
+    src = "lspci -vv"
+
+    if lspci_output is not None:
+        raw = lspci_output
+    else:
+        raw = run(["lspci","-vv"])
+
+    if not raw:
+        return unknown(src,"could not get lspci output")
+
+    lnkcap_line = None
+    lnksta_line = None
+
+    for line in raw.splitlines():
+        if "LnkCap:" in line and lnkcap_line is None:
+            lnkcap_line = line
+
+        if "LnkSta:" in line and lnksta_line is None:
+            lnksta_line = line
+
+        if lnkcap_line is not None and lnksta_line is not None:
+            break
+
+    if lnkcap_line is None or lnksta_line is None:
+        return unknown(src, "LnkCap or LnkSta was not found")
+
+    capability = _parse_link_line(lnkcap_line)
+    negotiated = _parse_link_line(lnksta_line)
+
+    interpretation = generate_interpretation_string(
+        negotiated,
+        capability
+    )
 
         
     return {
-        "value":,
-        "negotiated": ,
-        "capability": ,
-        "interpretation": ,
-        "source": ,
+        "value": negotiated["raw"],
+        "negotiated": negotiated,
+        "capability": capability,
+        "interpretation": interpretation,
+        "source": src,
         "status": "ok",
     }
 
@@ -275,12 +307,46 @@ def probe_thermal_zones(root: Path = Path("/")) -> dict[str, Any]:
     than once, and it is a good, cheap lesson in reading units before reading
     numbers.
     """
+    src = "/sys/class/thermal/thermal_zone*/temp"
+    base = Path(root) / "sys/class/thermal"
+
+    zones = []
+    for zone in base.glob("thermal_zone*"):
+        type_path = f"/sys/class/thermal/{zone.name}/type"
+        temp_path = f"/sys/class/thermal/{zone.name}/temp"
+
+        sensor_type = read_text(root, type_path)
+
+        try:
+            raw_temp = read_text(root, temp_path)
+        except TypeError:
+            continue
+
+        if sensor_type is None or raw_temp is None:
+            continue
+
+        temp_c = int(raw_temp) / 1000
+
+        zones.append({
+            "zone": zone.name,
+            "type": sensor_type,
+            "temp_c": temp_c,
+        })
+
+    if not zones:
+        return unknown(src, "no readable thermal zones found")
+
+    max_temp = max(zone["temp_c"] for zone in zones)
+
     return {
-        "value": ,
-        "zones": ,
-        "source": ,
+        "value": max_temp,
+        "zones": zones,
+        "source": src,
         "status": "ok",
     }
+    
+
+    
 
 
 def probe_power_mode(root: Path = Path("/"), nvpmodel_output: str | None = None) -> dict[str, Any]:
@@ -291,10 +357,30 @@ def probe_power_mode(root: Path = Path("/"), nvpmodel_output: str | None = None)
     same model are usually reporting different power modes, and without this
     field there is no way to find that out after the fact.
     """
+
+    src = "nvpmodel -q"
+
+    if nvpmodel_output is not None:
+        raw = nvpmodel_output
+    else:
+        raw = run(["nvpmodel", "-q"])
+
+    if not raw:
+        return unknown(src, "could not get nvpmodel output")
+
+    mode_match = re.search(r"NV Power Mode:\s*(.+)", raw)
+    id_match = re.search(r"^\s*(\d+)\s*$", raw, re.MULTILINE)
+
+    if not mode_match or not id_match:
+        return unknown(src, "could not parse power mode")
+
+    mode_name = mode_match.group(1).strip()
+    mode_id = int(id_match.group(1))
+
     return {
-        "value": ,
-        "mode_id": ,
-        "source": ,
+        "value": mode_name,
+        "mode_id": mode_id,
+        "source": src,
         "status": "ok",
     }
 
