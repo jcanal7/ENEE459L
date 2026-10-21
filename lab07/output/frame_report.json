@@ -1,6 +1,6 @@
 {
     "capture_metadata": {
-        "saved_image_path": "/home/student/Desktop/ENEE459L/lab07/output/captured_frame.jpg",
+        "saved_image_path": "/home/student/ENEE459L/lab07/output/captured_frame.jpg",
         "width": 1920,
         "height": 1080,
         "channels": 3,
@@ -8,14 +8,14 @@
     },
     "frame_analysis": {
         "classification": "scene",
-        "classification_reason": "mean 0.3430, spread 0.9216. Exposed and structured.",
+        "classification_reason": "Image has sufficient brightness and contrast",
         "stats": {
-            "min": 0.0,
-            "max": 0.9215686321258545,
-            "mean": 0.34295832544143645,
-            "spread": 0.9215686321258545,
-            "sd": 0.08602229872828547,
-            "samples": 2073600.0
+            "min": 0.01568627543747425,
+            "max": 1.0,
+            "mean": 0.4256784254959231,
+            "spread": 0.9843137245625257,
+            "sd": 0.08755822772533588,
+            "samples": 2073600
         }
     },
     "memory_pricing": {

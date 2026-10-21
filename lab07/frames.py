@@ -10,6 +10,8 @@ import json
 import numpy as np
 from pathlib import Path
 
+import math #added
+
 class FrameError(ValueError):
     """A shape or a format this module cannot price. `capture.py` exits 3."""
 
@@ -113,38 +115,141 @@ def grab_frame(pipeline: str, warmup_frames: int = 15) -> np.ndarray:
 ## Your work starts here ###
 ############################
 
-def frame_bytes(width: int, height: int, fmt: str) -> int:
-    pass
+def frame_bytes(width: int, height: int, fmt: str) -> int: # calc mem required for 1 frame
+    if type(width) is not int or width <= 0:
+        raise FrameError("Width must be a positive integer")
+
+    if type(height) is not int or height <= 0:
+        raise FrameError("Height must be a positive integer")
+
+    bpp = _bytes_per_pixel(fmt) #Looks up bytes/pixel using helper function
+
+    total = width * height * bpp
+
+    return math.ceil(total) #ceil rounds up
 
 
-def bytes_per_second(width: int, height: int, fmt: str, fps: float) -> float:
-    pass
+def bytes_per_second(width: int, height: int, fmt: str, fps: float) -> float: #calc mem bandwidth at given fps
+    if fps <= 0:
+        raise FrameError("FPS must be greater than zero")
+
+    single_frame = frame_bytes(width, height, fmt)
+
+    bandwidth = single_frame * fps
+
+    return bandwidth
 
 
-def frame_stats(pixels: Sequence[float] | Iterable[float]) -> dict[str, float]:
-    pass
+def frame_stats(pixels: Sequence[float] | Iterable[float]) -> dict[str, float]: #min-darkest pixel, max-brightest, mean,spread,sd,samples
+    values = [float(v) for v in pixels]
+
+    if not values:
+        raise FrameError("No pixel values provided")
+
+    vmin = min(values)
+    vmax = max(values)
+
+    n = len(values)
+    mean = sum(values) / n
+
+    variance = sum((v - mean) ** 2 for v in values) / n
+
+    sd = math.sqrt(variance)
+
+    spread = vmax - vmin
+
+    return {
+        "min": vmin,
+        "max": vmax,
+        "mean": mean,
+        "spread": spread,
+        "sd": sd,
+        "samples": n
+    }
 
 
-def classify(stats: dict[str, float]) -> tuple[str, str]:
-    pass
+def classify(stats: dict[str, float]) -> tuple[str, str]: #image is black/flat/dark/normal
+
+    for key in ("max", "spread", "mean"):
+        if key not in stats:
+            raise FrameError(f"Missing required statistic: {key}")
+
+    if stats["max"] <= BLACK_MAX:
+        return ("black", "Maximum pixel intensity is too low")
+
+    if stats["spread"] < FLAT_SPREAD:
+        return ("flat", "Image has very little contrast")
+
+    if stats["mean"] < 0.10:
+        return ("dark", "Average pixel intensity is too low")
+
+    return ("scene", "Image has sufficient brightness and contrast")
 
 
-def conversion_bytes(width: int, height: int, src: str, dst: str) -> int:
-    pass
+def conversion_bytes(width: int, height: int, src: str, dst: str) -> int: #calc mem traffic when converting formats
+
+    if src.lower() == dst.lower():
+        return 0
+
+    read_bytes = frame_bytes(width, height, src) #mem size of original image
+
+    write_bytes = frame_bytes(width, height, dst) #mem size of converted image
+
+    return read_bytes + write_bytes
 
 
-def resize_bytes(src_w: int, src_h: int, dst_w: int, dst_h: int,
+def resize_bytes(src_w: int, src_h: int, dst_w: int, dst_h: int, #calc mem traffic when resizing image
                  fmt: str) -> int:
-    pass
+
+    source_bytes = frame_bytes(src_w, src_h, fmt)
+
+    destination_bytes = frame_bytes(dst_w, dst_h, fmt) # new height and width
+
+    return source_bytes + destination_bytes
 
 
-def normalise_bytes(width: int, height: int, channels: int = 3,
-                    out_bytes: int = 4) -> int:
-    pass
+def normalise_bytes(width: int, height: int, channels: int = 3, #calc mem traffic when converting pixels to model tensors
+                    out_bytes: int = 4) -> int:                 #image pixels into floating point values
+
+    if width <= 0 or height <= 0 or channels <= 0:
+        raise FrameError("Dimensions and channels must be positive")
+
+    P = width * height * channels
+
+    bytes_in = P * 1
+
+    bytes_out = P * out_bytes
+
+    return bytes_in + bytes_out
 
 
 def summarise_formats(width: int, height: int) -> list[dict[str, Any]]:
-    pass
+
+    base = frame_bytes(width, height, "rgb") #baseline is RGB. compared mem to RGB
+
+    rows = []
+
+    for fmt in FORMATS:
+
+        n = frame_bytes(width, height, fmt)
+
+        bpp = _bytes_per_pixel(fmt)
+
+        ratio = n / base
+
+        note = FORMAT_NOTES[fmt]
+
+        row = {
+            "format": fmt,
+            "bytes_per_pixel": bpp,
+            "bytes": n,
+            "relative_to_rgb": ratio,
+            "note": note
+        }
+
+        rows.append(row)
+
+    return rows
 
 
 ###############################
