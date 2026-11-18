@@ -420,8 +420,92 @@ def exit_code(verdicts: list[dict[str, Any]]) -> int:
 ######## Students start editing from here ##############
 #######################################################
 
+#before detector starts processing audio, checking for valid settings
+
+#k = num of positive windows required
+#n = num of recent windows examined
+#k cannot be greater than n
+
+#only refractory and collar can also be equal to 0
+
+#hysteresis: way to prevent detector from repeatedly switching on and off when scores fluctuate. 
+#uses enter and leave parameters. detector turns on when enter, turns off when leave. 
+
 def _validate_plan(plan: Any) -> None:
-    pass
+    # Step 1: Verify required plan keys
+    _need(plan, REQUIRED_PLAN, "plan")
+
+    # Step 2: Validate positive integers
+    _pos_int(plan["sample_rate"], "plan.sample_rate")
+
+    for k in ("k", "n"):
+        _pos_int(plan[k], f"plan.{k}")
+
+    # Step 3: Enforce k <= n
+    if plan["k"] > plan["n"]:
+        raise SchemaError(
+            f"plan.k is {plan['k']} of plan.n {plan['n']}. "
+            "A rule that asks for more agreeing windows than it "
+            "looks at can never fire, and a detector that never "
+            "fires has a false-trigger rate of zero."
+        )
+
+    # Step 4: Validate positive durations and budgets
+    for k in ("block_ms", "window_s", "hop_s", "event_s",
+              "infer_ms", "ft_per_hour_max"):
+        if _number(plan[k], f"plan.{k}") <= 0.0:
+            raise SchemaError(
+                f"plan.{k} is {plan[k]!r}. Every duration and "
+                "every budget in the plan is positive; a zero "
+                "here is a field that was left for later and "
+                "then shipped."
+            )
+
+    # Step 5: Validate ring buffer block count
+    _pos_int(plan["ring_blocks"], "plan.ring_blocks")
+
+    # Step 6: Validate non-negative durations
+    for k in ("refractory_s", "collar_s"):
+        if _number(plan[k], f"plan.{k}") < 0.0:
+            raise SchemaError(
+                f"plan.{k} is {plan[k]!r}. Zero is allowed "
+                "and means the mechanism is off; negative "
+                "is a sign somebody flipped."
+            )
+
+    # Step 7: Validate probability thresholds
+    for k in ("threshold", "enter", "leave"):
+        _score(plan[k], f"plan.{k}")
+
+    # Step 8: Enforce hysteresis ordering
+    if plan["leave"] > plan["enter"]:
+        raise SchemaError(
+            f"plan.leave is {plan['leave']} and plan.enter "
+            f"is {plan['enter']}. Hysteresis leaves below "
+            "where it enters. The other way round is not "
+            "a wider band, it is a detector that turns off "
+            "before it has turned on."
+        )
+
+    # Step 9: Enforce overlapping or contiguous windows
+    if plan["hop_s"] > plan["window_s"]:
+        raise SchemaError(
+            f"plan.hop_s is {plan['hop_s']} against a window "
+            f"of {plan['window_s']}. A hop longer than the "
+            "window skips audio between decisions, and the "
+            "samples in the gap were captured, paid for and "
+            "never looked at."
+        )
+
+    # Step 10: Validate pre-computed stated numbers
+    _need(plan["stated"], REQUIRED_STATED, "plan.stated")
+
+    for k in REQUIRED_STATED:
+        if _number(plan["stated"][k], f"plan.stated.{k}") <= 0.0:
+            raise SchemaError(
+                f"plan.stated.{k} is {plan['stated'][k]!r}. "
+                "Every stated arithmetic value must be positive."
+            )
 
 
 #######################################################

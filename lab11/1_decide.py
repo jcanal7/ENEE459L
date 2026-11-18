@@ -259,14 +259,112 @@ def base_rate_sentence(pr: dict) -> str:
 ######## Students start editing here ##################
 #######################################################
 
+#confusion matrix: measures how well our detector's predictions match what actually happened
+#four possible outcomes: true positive, false positive (no word but detects), true negative (no word and no detection), false negative
+
+#detector depends on s>=t
+#s: model confidence score, t: classification threshold
+#lbls: labels
+
+#returns dictionary with 4 counters of possible outcomes and total num of windows analyzed
+
 def confusion(values, labels, threshold: float) -> dict:
-    pass
+    # Step 1: Validate scores and threshold
+    scores = _score_list(values, "values")
+    t = _check_score(threshold, "threshold")
+
+    # Step 2: Validate ground-truth labels
+    lbls = []
+    for i, y in enumerate(labels):
+        if isinstance(y, bool) or y not in (0, 1):
+            raise DecideError(
+                f"labels[{i}] is {y!r}; must be integer 0 or 1."
+            )
+        lbls.append(int(y))
+
+    # Step 3: Enforce equal trace lengths
+    if len(scores) != len(lbls):
+        raise DecideError(
+            f"values has {len(scores)} items and "
+            f"labels has {len(lbls)}."
+        )
+
+    # Step 4: Count confusion matrix outcomes
+    tp = fp = tn = fn = 0
+
+    for s, y in zip(scores, lbls):
+        pred = (s >= t)
+
+        if pred and y == 1:
+            tp += 1
+        elif pred and y == 0:
+            fp += 1
+        elif not pred and y == 1:
+            fn += 1
+        else:
+            tn += 1
+
+    # Step 5: Return confusion matrix
+    return {
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+        "windows": len(scores),
+    }
 
 
+#RATES---
+#convert 4 possible outcome counts into performance metrics
+
+#TPR: fraction of actual positive windows detected
+#FPR: fraction of negative windows incorrectly flagged
+#precision: fraction of positive predictions that were correct
+
+#TPR=recall
+#F1: combines precision and recall into 1 metric
 def rates(cm: dict) -> dict:
-    pass
+    # Step 1: Extract confusion matrix counts
+    tp = cm["tp"]
+    fp = cm["fp"]
+    tn = cm["tn"]
+    fn = cm["fn"]
+
+    # Step 2: Calculate true positive rate
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else None
+
+    # Step 3: Calculate false positive rate
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else None
+
+    # Step 4: Calculate precision
+    precision = tp / (tp + fp) if (tp + fp) > 0 else None
+
+    # Step 5: Recall is the same as TPR
+    recall = tpr
+
+    # Step 6: Calculate F1 score
+    if precision is not None and recall is not None and (precision + recall) > 0:
+        f1 = 2.0 * precision * recall / (precision + recall)
+    elif precision == 0.0 and recall == 0.0:
+        f1 = 0.0
+    else:
+        f1 = None
+
+    # Step 7: Return calculated metrics
+    return {
+        "tpr": tpr,
+        "fpr": fpr,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
 
 
+
+#--------------
+#how trustworthy our detector will be in real-world operation, where spoken events are rare
+
+#tiny FPR can produce many false alarms if detector makes many decisions
 def precision_at_base_rate(
     tpr: float,
     fpr: float,
@@ -274,7 +372,55 @@ def precision_at_base_rate(
     positives_per_event: int,
     hop_s: float,
 ) -> dict:
-    pass
+    # Step 1: Validate rates and hop duration
+    t_rate = _check_score(tpr, "tpr")
+    f_rate = _check_score(fpr, "fpr")
+    h = _check_pos(hop_s, "hop_s")
+
+    # Step 2: Validate event count parameters
+    if (isinstance(events_per_hour, bool)
+            or not isinstance(events_per_hour, int)
+            or events_per_hour < 0):
+        raise DecideError(
+            "events_per_hour must be a non-negative integer."
+        )
+
+    if (isinstance(positives_per_event, bool)
+            or not isinstance(positives_per_event, int)
+            or positives_per_event <= 0):
+        raise DecideError(
+            "positives_per_event must be a positive integer."
+        )
+
+    # Step 3: Compute hourly window counts
+    decisions = SECONDS_PER_HOUR / h
+    positives = events_per_hour * positives_per_event
+
+    if positives > decisions:
+        raise DecideError(
+            "positives exceed total decisions per hour."
+        )
+
+    negatives = decisions - positives
+
+    # Step 4: Compute expected detections and precision
+    expected_tp = t_rate * positives
+    expected_fp = f_rate * negatives
+
+    denom = expected_tp + expected_fp
+    precision = expected_tp / denom if denom > 0 else None
+
+    base_rate = positives / decisions
+
+    # Step 5: Return results
+    return {
+        "positives": positives,
+        "negatives": negatives,
+        "expected_tp": expected_tp,
+        "expected_fp": expected_fp,
+        "precision": precision,
+        "base_rate": base_rate,
+    }
 
 
 #######################################################
